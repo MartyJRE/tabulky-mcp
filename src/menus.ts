@@ -162,17 +162,24 @@ interface JidloviceMenu {
       visible: boolean;
       available: boolean;
     } | null;
-    meal: { name: string; description: string | null; price: number };
+    meal: { name: string; description: string | null; price: number; category_id: number };
   }[];
 }
 
+// "Jídlovice do sklenice" are jars to take home, "QR" is internal; neither is a lunch option.
+const JIDLOVICE_SKIP = /sklenic|^qr$/i;
+
 async function jidlovice(branchId: number, isoDate: string): Promise<MenuItem[]> {
-  const menu = await getJson<JidloviceMenu>(`https://www.jidlovice.cz/api/v1/branch/${branchId}/menu/${isoDate}`);
+  const [menu, categories] = await Promise.all([
+    getJson<JidloviceMenu>(`https://www.jidlovice.cz/api/v1/branch/${branchId}/menu/${isoDate}`),
+    getJson<{ id: number; name: string }[]>("https://www.jidlovice.cz/api/v1/category/"),
+  ]);
   if (menu.is_closed) throw new Error(`Closed: ${menu.closed_reason ?? "no reason given"}`);
+  const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   return menu.menu_items
-    .filter((i) => i.meal_override?.visible !== false)
+    .filter((i) => i.meal_override?.visible !== false && !JIDLOVICE_SKIP.test(categoryName.get(i.meal.category_id) ?? ""))
     .map(({ meal, meal_override: o }) => ({
-      name: (o?.name ?? meal.name).trim(),
+      name: `${categoryName.get(meal.category_id) ?? "Jídlo"}: ${(o?.name ?? meal.name).trim()}`,
       description: (o?.description ?? meal.description)?.trim() || undefined,
       price_czk: o?.price ?? meal.price,
       ...(o?.available === false && { sold_out: true }),

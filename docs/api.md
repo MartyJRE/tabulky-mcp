@@ -6,6 +6,8 @@ Base: `https://www.kaloricketabulky.cz`. Add `format=json` to every API call. Re
 
 The web app appends a CSRF query param to writes (`&` + value of `#csrf`), but that value is just `=`, so it's effectively unused.
 
+Send `Accept: application/json, text/plain, */*` and `X-Requested-With: XMLHttpRequest` on every call, including login. Without them `statistic/*` returns the HTML page, and some writes fail with a generic "nepodařilo zapsat".
+
 ## Auth
 
 `POST /login/create?format=json` with `{"email", "password": md5(password)}` and no reCAPTCHA. The returned cookies authenticate later calls. The `kaloricketabulky_token` cookie (expiry 2073) does **not** authenticate API calls on its own.
@@ -27,7 +29,33 @@ The web app appends a CSRF query param to writes (`&` + value of `#csrf`), but t
 | Edit amount | `POST /user/diary/foodstuff/unit/edit` with `{diaryGuid, multiplier, unitGuid}` |
 | Delete | `GET /user/diary/foodstuff/delete/{id1,id2,…}` |
 
-Meal (diary time) IDs: 1 Snídaně, 2 Dopolední svačina, 3 Oběd, 4 Odpolední svačina, 5 Večeře, 6 Druhá večeře.
+Meal (diary time) IDs: 1 Snídaně, 2 Dopolední svačina, 3 Oběd, 4 Odpolední svačina, 5 Večeře, 6 Druhá večeře. Their display names (which a user can rename) are in `diaryTimeOptions` of the add form.
+
+The add form's default `unitGuid` is often a portion ("porce (150 g)", "lžička (5 ml)", "balení (730 ml)"), not grams. The 1 g/ml unit is the option with `multiplier: 1`.
+
+## Statistics (ranges)
+
+Each returns the whole range in one call (`page`/`limit` only apply to `tableData`).
+
+| Data | Request |
+|---|---|
+| kcal per day | `GET /statistic/energy/{from}/{to}/get` → `values[]` and `target[]` of `{from (ms, midnight Prague), value}` |
+| Macros per day | `GET /statistic/nutrients/{from}/{to}/get` → `nutrientsValues[]` / `nutrientsTarget[]` of `{createdDate, protein, carbs, fat}` |
+| Weigh-ins | `GET /statistic/weight/{from}/{to}/get` → `values[]` of `{from, value}` (only days with a measurement) |
+| Overview | `GET /statistic/summary/{date}/get` → BMI, basal, `monthWeight`, `weekEnergy`, `weekDrink`, `todayDrink` |
+| Streak | `GET /user/streak?date=yyyy-mm-dd` |
+
+## Not implemented
+
+Found by a second implementation of the same idea and confirmed by its author; listed here for reference.
+
+| Feature | Request |
+|---|---|
+| Saved meals ("Moje jídla") | List `GET /user/settings/meal/list?limit=100&query=`; log `GET /user/meal/add/form/{guid}` then `POST /user/meal/add`. Component `count = countOriginal × ratio`; a unit with `multiplier` 1 is grams, -1 is percent. |
+| Save a diary time as a meal | `GET /user/meal/create/form/{date}/{timeId}` then `POST /user/meal/create` with `title` |
+| Copy a diary time ("breakfast as yesterday") | `GET /user/diary-time/create/form/{date}/{timeId}`, set `selected: true` on items, `POST /user/diary-time/copy` with target `date` and `diaryTimeGuid` |
+| Move an entry | `GET /user/diary/{id}/{timeId}/0/dragndrop` (other meal) or `GET /user/diary/{id}/0/{date}/dragndrop` (other day). **A mutation over GET.** |
+| Drinks | `GET /autocomplete/drink?query=` |
 
 Nutrient units: the diary returns all nutrients in g (calcium `0.018` = 18 mg). The own-food add form takes cholesterol and calcium in **mg** but sodium in g.
 
@@ -43,4 +71,4 @@ The kcal target is stored in kJ; saving N kcal sometimes reads back as N−1.
 
 Food submission to the public database (`foodstuff/suggest`) is gone from the web (404), so it's app-only.
 
-Not yet used: time edit (`POST /user/diary/foodstuff/time/edit`), notes, activities, saved meals/recipes (`user/meal/*`), weight (`POST /user/weight/add`).
+Also not used: time edit (`POST /user/diary/foodstuff/time/edit`), notes, activities.

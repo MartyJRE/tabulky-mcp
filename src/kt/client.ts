@@ -3,6 +3,9 @@ import type {
   AddForm,
   ApiResponse,
   Diary,
+  EnergyRange,
+  NutrientRange,
+  WeightRange,
   OwnFood,
   ProfileForm,
   SearchHit,
@@ -12,6 +15,8 @@ import type {
 
 const BASE = "https://www.kaloricketabulky.cz";
 const SESSION_KEY = "kt-session-cookie";
+// Without these some endpoints (statistic/*) answer with the HTML page instead of JSON.
+const AJAX_HEADERS = { Accept: "application/json, text/plain, */*", "X-Requested-With": "XMLHttpRequest" };
 
 export interface Credentials {
   email: string;
@@ -56,6 +61,18 @@ export class KtClient {
     return this.get(`/statistic/summary/${date}/get`);
   }
 
+  getEnergyRange(from: string, to: string): Promise<EnergyRange> {
+    return this.get(`/statistic/energy/${from}/${to}/get`);
+  }
+
+  getNutrientRange(from: string, to: string): Promise<NutrientRange> {
+    return this.get(`/statistic/nutrients/${from}/${to}/get`);
+  }
+
+  getWeightRange(from: string, to: string): Promise<WeightRange> {
+    return this.get(`/statistic/weight/${from}/${to}/get`);
+  }
+
   async recordWeight(weight: number, date: string): Promise<void> {
     await this.post("/user/weight/add", { weight, date });
   }
@@ -66,7 +83,9 @@ export class KtClient {
 
   async addEntry(input: AddEntryInput): Promise<void> {
     const form = await this.getAddForm(input.foodId, input.date);
-    const unitId = input.unitId ?? form.unitGuid;
+    // The form's own default is often a portion ("porce (150 g)"), so without an explicit unit use the 1 g/ml unit.
+    const unitId =
+      input.unitId ?? form.unitOptions.find((u) => u.multiplier === 1)?.id ?? form.unitGuid;
     if (!form.unitOptions.some((u) => u.id === unitId)) {
       throw new Error(
         `Unknown unit ${unitId} for ${form.title}; options: ${JSON.stringify(form.unitOptions)}`,
@@ -183,7 +202,7 @@ export class KtClient {
     const sep = path.includes("?") ? "&" : "?";
     const res = await fetch(`${BASE}${path}${sep}format=json`, {
       ...init,
-      headers: { ...init.headers, Cookie: cookie },
+      headers: { ...AJAX_HEADERS, ...init.headers, Cookie: cookie },
       redirect: "manual",
     });
     // Unauthenticated API calls redirect to /login instead of returning 401.
@@ -210,7 +229,7 @@ export class KtClient {
   private async login(): Promise<string> {
     const res = await fetch(`${BASE}/login/create?format=json`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...AJAX_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({
         email: this.creds.email,
         password: md5(this.creds.password),

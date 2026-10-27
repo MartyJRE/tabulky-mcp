@@ -110,8 +110,6 @@ function compactDiary(diary: Diary) {
   }));
 }
 
-const PROGRESS_CODES = new Set(["total", "protein", "carbohydrate", "fat", "fiber", "sugar"]);
-
 function shiftIso(iso: string, days: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
@@ -119,19 +117,6 @@ function shiftIso(iso: string, days: number): string {
 
 function isoFromMs(ms: number): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date(ms));
-}
-
-async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 interface ServerOptions {
@@ -180,7 +165,7 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
     "get_food_units",
     {
       description:
-        "List portion units for a food (e.g. 'kus (60 g)', '100 g', '1 g') with their gram weight. Call before add_food_entry to choose unit_id.",
+        "List portion units for a food (e.g. 'kus (60 g)', 'porce (150 g)', '1 g') with their gram weight, to log natural portions with add_food_entry.",
       inputSchema: { food_id: z.string() },
       annotations: { readOnlyHint: true },
     },
@@ -188,7 +173,6 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
       const form = await kt.getAddForm(food_id, ktDate());
       return json({
         title: form.title,
-        default_unit_id: form.unitGuid,
         units: form.unitOptions.map((u) => ({ unit_id: u.id, title: u.title, grams: u.multiplier })),
       });
     },
@@ -198,12 +182,13 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
     "add_food_entry",
     {
       description:
-        "Log a food from the KT database. amount is the number of units, e.g. 2 × 'kus (60 g)' or 150 × '1 g'.",
+        "Log a food from the KT database. Without unit_id, amount is in grams (or ml). With a unit_id from get_food_units, " +
+        "amount is the number of those units, e.g. 2 × 'kus (60 g)'.",
       inputSchema: {
         food_id: z.string(),
         meal: mealSchema,
         amount: z.number().positive(),
-        unit_id: z.string().optional().describe("From get_food_units; defaults to the food's default unit"),
+        unit_id: z.string().optional().describe("From get_food_units; omit to log grams"),
         date: dateSchema,
         time: timeSchema,
       },
@@ -307,33 +292,46 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
     "get_progress",
     {
       description:
-        "Daily intake vs. goals for a date range (kcal and main nutrients; days with 0 kcal were probably not logged), " +
-        "plus the weight log for the past month, BMI and basal metabolism. Use for trend and adherence reviews.",
+        "Daily kcal, protein, carbs and fat with their targets for a date range (days with ~0 kcal were probably not logged), " +
+        "plus every weigh-in over a longer window, BMI and basal metabolism. Use for trend and adherence reviews.",
       inputSchema: {
-        days: z.number().int().min(1).max(31).default(14),
+        days: z.number().int().min(1).max(90).default(14),
+        weight_days: z.number().int().min(7).max(365).default(90).describe("How far back to list weigh-ins"),
         end_date: dateSchema,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ days, end_date }) => {
+    async ({ days, weight_days, end_date }) => {
       const end = end_date ?? pragueToday();
-      const dates = Array.from({ length: days }, (_, i) => shiftIso(end, i - days + 1));
-      const daily = await mapLimited(dates, 4, async (iso) => ({
-        date: iso,
-        ...Object.fromEntries(
-          compactSummary(await kt.getDaySummary(ktDate(iso)))
-            .filter((s) => PROGRESS_CODES.has(String(s.name)))
-            .map((s) => [s.name, `${s.actual} / ${s.goal} ${s.unit}`]),
-        ),
-      }));
-      const stats = await kt.getStatistics(ktDate(end));
+      const to = ktDate(end);
+      const [energy, nutrients, weight, stats] = await Promise.all([
+        kt.getEnergyRange(ktDate(shiftIso(end, 1 - days)), to),
+        kt.getNutrientRange(ktDate(shiftIso(end, 1 - days)), to),
+        kt.getWeightRange(ktDate(shiftIso(end, 1 - weight_days)), to),
+        kt.getStatistics(to),
+      ]);
+
+      const byDay = new Map<string, Record<string, number>>();
+      const day = (ms: number) => byDay.get(isoFromMs(ms)) ?? byDay.set(isoFromMs(ms), {}).get(isoFromMs(ms))!;
+      for (const p of energy.values) if (p.from != null) day(p.from).kcal = Math.round(p.value);
+      for (const p of energy.target) if (p.from != null) day(p.from).kcal_target = Math.round(p.value);
+      for (const n of nutrients.nutrientsValues) {
+        Object.assign(day(n.createdDate), { protein: round(n.protein.value), carbs: round(n.carbs.value), fat: round(n.fat.value) });
+      }
+      for (const n of nutrients.nutrientsTarget) {
+        Object.assign(day(n.createdDate), { protein_target: n.protein.value, carbs_target: n.carbs.value, fat_target: n.fat.value });
+      }
+
       return json({
-        daily,
+        daily: [...byDay].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })),
         weight_kg: stats.weight,
         target_weight_kg: stats.weightTarget,
         bmi: `${stats.bmi} (${stats.bmiCategory})`,
         basal_kcal: stats.basal,
-        weight_log: stats.monthWeight.map((w) => ({ date: isoFromMs(w.from), kg: w.value })),
+        weight_log: weight.values
+          .filter((w) => w.from != null)
+          .map((w) => ({ date: isoFromMs(w.from!), kg: w.value }))
+          .sort((a, b) => a.date.localeCompare(b.date)),
       });
     },
   );

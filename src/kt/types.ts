@@ -113,6 +113,27 @@ export interface WeightPoint {
   value: number;
 }
 
+// `from` is the day's midnight in Europe/Prague as epoch ms.
+export interface StatPoint {
+  from: number | null;
+  value: number;
+  description: string | null;
+}
+
+export interface EnergyRange {
+  values: StatPoint[];
+  target: StatPoint[];
+}
+
+export interface NutrientRange {
+  nutrientsValues: { createdDate: number; protein: StatPoint; carbs: StatPoint; fat: StatPoint }[];
+  nutrientsTarget: { createdDate: number; protein: StatPoint; carbs: StatPoint; fat: StatPoint }[];
+}
+
+export interface WeightRange {
+  values: StatPoint[];
+}
+
 export interface Statistics {
   weight: string;
   weightTarget: string;
