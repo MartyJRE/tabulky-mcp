@@ -10,6 +10,19 @@ It uses KT's unofficial web API; see [docs/api.md](docs/api.md).
 
 Set `ENABLE_RECORD_WEIGHT=true` (in `.dev.vars` or as a Worker var) to also expose `record_weight`. It's off by default for setups where a scale or health integration already writes the weight.
 
+Set `LUNCH_SPOTS` (a secret, so where you work stays out of the repo) to a JSON list of your usual lunch places to enable `get_lunch_menus`:
+
+```json
+[
+  { "name": "FastGood Rustonka", "area": "Invalidovna", "source": { "type": "menicka", "url": "https://www.menicka.cz/7099-fastgood-rustonka.html" } },
+  { "name": "Bean House", "source": { "type": "choiceqr", "host": "bhouse.choiceqr.com", "section": "oběd" } },
+  { "name": "Jídlovice", "source": { "type": "jidlovice", "branchId": 2 } },
+  { "name": "Gemüse Corner Kebab", "source": { "type": "wolt", "slug": "gemuse-corner-kebab-karlin" } }
+]
+```
+
+Source types: `menicka` (menicka.cz page), `choiceqr` (sections active today whose name matches `section`), `jidlovice` (branch ID from `/api/v1/branch/`) and `wolt` (venue slug from its wolt.com URL; fixed menu, drinks excluded).
+
 `set_goals` takes macros only and derives the kcal target from them (4/4/9 kcal per g, rounded to 10), so the two can't drift apart.
 
 ## Nutrition coach

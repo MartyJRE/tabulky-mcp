@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { KtClient } from "./kt/client";
+import { getMenus, spotsSchema, type Spot } from "./menus";
 import type { Diary, DiaryItem, ProfileForm } from "./kt/types";
 
 export interface Env {
@@ -10,6 +11,7 @@ export interface Env {
   KT_PASSWORD: string;
   MCP_PATH_TOKEN: string;
   ENABLE_RECORD_WEIGHT?: string;
+  LUNCH_SPOTS?: string;
 }
 
 // Proxied rather than committed, so the repo doesn't ship KT's logo. Connector UIs pick up the domain's favicon.
@@ -134,6 +136,7 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Prom
 
 interface ServerOptions {
   recordWeight: boolean;
+  lunchSpots: Spot[];
 }
 
 function buildServer(kt: KtClient, options: ServerOptions): McpServer {
@@ -335,6 +338,21 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
     },
   );
 
+  if (options.lunchSpots.length) {
+    server.registerTool(
+      "get_lunch_menus",
+      {
+        description:
+          "Menus of the user's usual lunch places (e.g. near the office): today's daily menu where the place publishes one, " +
+          "otherwise its fixed menu. Prices in CZK, no nutrition data; estimate it yourself. " +
+          `Places: ${options.lunchSpots.map((s) => s.name + (s.area ? ` (${s.area})` : "")).join(", ")}.`,
+        inputSchema: { date: dateSchema },
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      async ({ date }) => json(await getMenus(options.lunchSpots, date ?? pragueToday())),
+    );
+  }
+
   if (options.recordWeight) {
     server.registerTool(
       "record_weight",
@@ -420,7 +438,10 @@ export default {
     }
 
     const kt = new KtClient({ email: env.KT_EMAIL, password: env.KT_PASSWORD }, env.KT_SESSION);
-    const server = buildServer(kt, { recordWeight: env.ENABLE_RECORD_WEIGHT === "true" });
+    const server = buildServer(kt, {
+      recordWeight: env.ENABLE_RECORD_WEIGHT === "true",
+      lunchSpots: env.LUNCH_SPOTS ? spotsSchema.parse(JSON.parse(env.LUNCH_SPOTS)) : [],
+    });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
