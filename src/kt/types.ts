@@ -88,6 +88,26 @@ export interface Diary {
   activities: DiaryItem[];
 }
 
+export interface OwnNutrient {
+  code: string;
+  title: string;
+  value: number | null;
+  computedValue: string | null;
+  active: boolean;
+  ratio: number | null;
+}
+
+export interface ProfileForm {
+  ownTargetEnergy: number | null;
+  ownTargetEnergyOpen: boolean;
+  ownDailyDose: boolean;
+  ownNutrients: OwnNutrient[];
+  energyUnit: string;
+  weight: number | null;
+  targetWeight: number | null;
+  [field: string]: unknown;
+}
+
 export interface OwnFood {
   title: string;
   energy: number;

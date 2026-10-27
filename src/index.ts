@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { KtClient } from "./kt/client";
-import type { Diary, DiaryItem } from "./kt/types";
+import type { Diary, DiaryItem, ProfileForm } from "./kt/types";
 
 export interface Env {
   KT_SESSION: KVNamespace;
@@ -10,6 +10,10 @@ export interface Env {
   KT_PASSWORD: string;
   MCP_PATH_TOKEN: string;
 }
+
+// Proxied rather than committed, so the repo doesn't ship KT's logo. Connector UIs pick up the domain's favicon.
+const ICON_URL = "https://www.kaloricketabulky.cz/resources/image/favicon/apple-touch-icon.png";
+const ICON_PATHS = new Set(["/favicon.ico", "/favicon.png", "/apple-touch-icon.png"]);
 
 // KT diary-time IDs are fixed; users can only rename the meals.
 const MEALS = {
@@ -105,7 +109,7 @@ function compactDiary(diary: Diary) {
 
 function buildServer(kt: KtClient): McpServer {
   const server = new McpServer(
-    { name: "kaloricke-tabulky", version: "0.1.0" },
+    { name: "kaloricke-tabulky", version: "0.1.0", icons: [{ src: ICON_URL, mimeType: "image/png", sizes: ["180x180"] }] },
     {
       instructions:
         "Logs food into the user's KalorickeTabulky.cz diary. Workflow: identify each component of a meal separately, " +
@@ -231,6 +235,43 @@ function buildServer(kt: KtClient): McpServer {
   );
 
   server.registerTool(
+    "get_goals",
+    {
+      description: "Read the daily kcal target and nutrient goals, plus current and target body weight.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => json(compactGoals(await kt.getProfile())),
+  );
+
+  server.registerTool(
+    "set_goals",
+    {
+      description:
+        "Set daily macro goals (g). The kcal target is derived from them (4/4/9 kcal per g, rounded to 10), so it always matches. " +
+        "Propose the new numbers and get the user's confirmation before calling; these goals may come from their nutritionist.",
+      inputSchema: {
+        protein: z.number().positive(),
+        carbs: z.number().positive(),
+        fat: z.number().positive(),
+        fiber: z.number().positive().optional(),
+        sugar: z.number().positive().optional(),
+        saturated_fat: z.number().positive().optional(),
+        salt: z.number().positive().optional(),
+      },
+      annotations: { idempotentHint: true },
+    },
+    async ({ protein, carbs, fat, fiber, sugar, saturated_fat, salt }) => {
+      const kcal = macroKcal(protein, carbs, fat);
+      const nutrients = Object.fromEntries(
+        Object.entries({ protein, carbohydrate: carbs, fat, fiber, sugar, saturatedFattyAcid: saturated_fat, salt })
+          .filter(([, v]) => v != null),
+      ) as Record<string, number>;
+      return json(compactGoals(await kt.setGoals(kcal, nutrients)));
+    },
+  );
+
+  server.registerTool(
     "delete_food_entries",
     {
       description: "Delete diary entries by entry_id (from get_diary).",
@@ -244,6 +285,21 @@ function buildServer(kt: KtClient): McpServer {
   );
 
   return server;
+}
+
+export function macroKcal(protein: number, carbs: number, fat: number): number {
+  return Math.round((4 * protein + 4 * carbs + 9 * fat) / 10) * 10;
+}
+
+function compactGoals(p: ProfileForm) {
+  return {
+    kcal_target: p.ownTargetEnergy,
+    nutrients: p.ownNutrients
+      .filter((n) => n.active)
+      .map((n) => ({ code: n.code, goal: n.value, computed_default: n.computedValue })),
+    weight_kg: p.weight,
+    target_weight_kg: p.targetWeight,
+  };
 }
 
 interface SummaryItem {
@@ -268,6 +324,19 @@ function compactSummary(summary: unknown) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
+    if (ICON_PATHS.has(pathname)) {
+      const icon = await fetch(ICON_URL, { cf: { cacheTtl: 86400, cacheEverything: true } });
+      return new Response(icon.body, {
+        status: icon.status,
+        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+      });
+    }
+    if (pathname === "/") {
+      return new Response(
+        `<!doctype html><html><head><title>Kalorické tabulky MCP</title><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"></head><body></body></html>`,
+        { headers: { "Content-Type": "text/html; charset=utf-8" } },
+      );
+    }
     if (pathname !== `/mcp/${env.MCP_PATH_TOKEN}`) {
       return new Response("Not found", { status: 404 });
     }

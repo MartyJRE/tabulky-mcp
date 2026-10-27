@@ -6,7 +6,9 @@ It uses KT's unofficial web API; see [docs/api.md](docs/api.md).
 
 ## Tools
 
-`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`.
+`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`, `get_goals`, `set_goals`.
+
+`set_goals` takes macros only and derives the kcal target from them (4/4/9 kcal per g, rounded to 10), so the two can't drift apart.
 
 ## Local dev
 

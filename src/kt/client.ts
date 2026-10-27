@@ -4,6 +4,7 @@ import type {
   ApiResponse,
   Diary,
   OwnFood,
+  ProfileForm,
   SearchHit,
   UnitForm,
 } from "./types";
@@ -108,6 +109,36 @@ export class KtClient {
       multiplier: amount,
       unitGuid,
     });
+  }
+
+  getProfile(): Promise<ProfileForm> {
+    return this.get("/user/settings/profile/form");
+  }
+
+  // Mirrors the settings page: the *Open / ownDailyDose flags tell the server which sections to save.
+  async setGoals(kcal: number, nutrients: Record<string, number>): Promise<ProfileForm> {
+    const form = await this.getProfile();
+    const known = new Set(form.ownNutrients.map((n) => n.code));
+    const unknown = Object.keys(nutrients).filter((c) => !known.has(c));
+    if (unknown.length) throw new Error(`Unknown nutrient codes: ${unknown.join(", ")}`);
+
+    const save = (target: number) =>
+      this.post("/user/settings/profile/edit", {
+        ...form,
+        ownTargetEnergy: target,
+        ownTargetEnergyOpen: true,
+        ownDailyDose: true,
+        ownNutrients: form.ownNutrients.map((n) =>
+          n.code in nutrients ? { ...n, value: nutrients[n.code], ratio: null } : n,
+        ),
+      });
+
+    await save(kcal);
+    // KT stores the target in kJ and the round trip sometimes truncates it by 1 kcal; compensate once.
+    const saved = await this.getProfile();
+    if (saved.ownTargetEnergy === kcal) return saved;
+    await save(kcal + (kcal - (saved.ownTargetEnergy ?? kcal)));
+    return this.getProfile();
   }
 
   async deleteEntries(entryIds: string[]): Promise<void> {

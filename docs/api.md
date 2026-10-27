@@ -29,4 +29,18 @@ The web app appends a CSRF query param to writes (`&` + value of `#csrf`), but t
 
 Meal (diary time) IDs: 1 Snídaně, 2 Dopolední svačina, 3 Oběd, 4 Odpolední svačina, 5 Večeře, 6 Druhá večeře.
 
+Nutrient units: the diary returns all nutrients in g (calcium `0.018` = 18 mg). The own-food add form takes cholesterol and calcium in **mg** but sodium in g.
+
+## Goals
+
+| Action | Request |
+|---|---|
+| Read | `GET /user/settings/profile/form` → `{ownTargetEnergy (kcal), ownDailyDose, ownNutrients: [{code, value (g), computedValue, active, ratio}], weight, targetWeight, …}` |
+| Save | `POST /user/settings/profile/edit?=` with the whole form; `ownTargetEnergyOpen: true` saves the kcal target, `ownDailyDose: true` saves `ownNutrients` |
+| kJ view | `GET /user/settings/premium/goals` → `{goalEnergy (kJ), goalProtein, goalFat, goalCarbohydrate, goalFiber}` |
+
+The kcal target is stored in kJ; saving N kcal sometimes reads back as N−1.
+
+Food submission to the public database (`foodstuff/suggest`) is gone from the web (404), so it's app-only.
+
 Not yet used: time edit (`POST /user/diary/foodstuff/time/edit`), notes, activities, saved meals/recipes (`user/meal/*`), weight (`POST /user/weight/add`).
