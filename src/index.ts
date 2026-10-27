@@ -49,17 +49,48 @@ function json(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
 }
 
+// Tool-facing nutrient name → KT field. The diary returns everything in grams, but the own-food
+// form takes cholesterol and calcium in mg (sodium stays in g), hence the separate `formMg` flag.
+const NUTRIENTS = {
+  protein: { field: "protein", mg: false, formMg: false },
+  carbs: { field: "carbohydrate", mg: false, formMg: false },
+  sugar: { field: "sugar", mg: false, formMg: false },
+  fat: { field: "fat", mg: false, formMg: false },
+  saturated_fat: { field: "saturatedFattyAcid", mg: false, formMg: false },
+  trans_fat: { field: "transFattyAcid", mg: false, formMg: false },
+  monounsaturated_fat: { field: "monoSaturated", mg: false, formMg: false },
+  polyunsaturated_fat: { field: "polySaturated", mg: false, formMg: false },
+  fiber: { field: "fiber", mg: false, formMg: false },
+  salt: { field: "salt", mg: false, formMg: false },
+  alcohol: { field: "alcohol", mg: false, formMg: false },
+  cholesterol_mg: { field: "cholesterol", mg: true, formMg: true },
+  sodium_mg: { field: "sodium", mg: true, formMg: false },
+  calcium_mg: { field: "calcium", mg: true, formMg: true },
+} as const;
+type Nutrient = keyof typeof NUTRIENTS;
+
+const round = (n: number) => Math.round(n * 100) / 100;
+
 function compactItem(f: DiaryItem) {
-  return {
-    entry_id: f.id,
-    title: f.title,
-    amount: f.unit,
-    kcal: f.energy,
-    protein: f.protein,
-    carbs: f.carbohydrate,
-    fat: f.fat,
-    time: f.time,
-  };
+  const nutrients: Partial<Record<Nutrient, number>> = {};
+  for (const [name, { field, mg }] of Object.entries(NUTRIENTS) as [Nutrient, (typeof NUTRIENTS)[Nutrient]][]) {
+    const v = f[field];
+    if (v != null) nutrients[name] = round(mg ? v * 1000 : v);
+  }
+  return { entry_id: f.id, title: f.title, amount: f.unit, kcal: f.energy, ...nutrients, time: f.time };
+}
+
+const nutrientInputSchema = Object.fromEntries(
+  Object.keys(NUTRIENTS).map((n) => [n, z.number().nonnegative().optional()]),
+) as Record<Nutrient, z.ZodOptional<z.ZodNumber>>;
+
+function toKtNutrients(input: Partial<Record<Nutrient, number>>) {
+  const out: Record<string, number> = {};
+  for (const [name, { field, mg, formMg }] of Object.entries(NUTRIENTS) as [Nutrient, (typeof NUTRIENTS)[Nutrient]][]) {
+    const v = input[name];
+    if (v != null) out[field] = mg && !formMg ? v / 1000 : v;
+  }
+  return out;
 }
 
 function compactDiary(diary: Diary) {
@@ -151,28 +182,19 @@ function buildServer(kt: KtClient): McpServer {
     "add_own_food",
     {
       description:
-        "Log a one-off food with your own estimated nutrition for the whole portion (not per 100 g). " +
+        "Log a one-off food with your own estimated nutrition for the whole portion (not per 100 g); macros in g, *_mg fields in mg. " +
         "Use for restaurant dishes or anything without a good database match.",
       inputSchema: {
         title: z.string().describe("Short Czech name, e.g. 'Svíčková s knedlíkem (restaurace)'"),
         kcal: z.number().nonnegative(),
-        protein: z.number().nonnegative().optional(),
-        carbs: z.number().nonnegative().optional(),
-        fat: z.number().nonnegative().optional(),
-        fiber: z.number().nonnegative().optional(),
-        sugar: z.number().nonnegative().optional(),
+        ...nutrientInputSchema,
         meal: mealSchema,
         date: dateSchema,
         time: timeSchema,
       },
     },
-    async ({ title, kcal, protein, carbs, fat, fiber, sugar, meal, date, time }) => {
-      await kt.addOwnFood(
-        { title, energy: kcal, protein, carbohydrate: carbs, fat, fiber, sugar },
-        ktDate(date),
-        MEALS[meal],
-        time,
-      );
+    async ({ title, kcal, meal, date, time, ...nutrients }) => {
+      await kt.addOwnFood({ title, energy: kcal, ...toKtNutrients(nutrients) }, ktDate(date), MEALS[meal], time);
       return json({ ok: true });
     },
   );

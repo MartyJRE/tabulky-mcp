@@ -61,6 +61,16 @@ export interface DiaryItem {
   fat: number | null;
   fiber: number | null;
   sugar: number | null;
+  saturatedFattyAcid: number | null;
+  transFattyAcid: number | null;
+  monoSaturated: number | null;
+  polySaturated: number | null;
+  cholesterol: number | null;
+  sodium: number | null;
+  salt: number | null;
+  calcium: number | null;
+  alcohol: number | null;
+  water: number | null;
   time: string | null;
 }
 
@@ -87,5 +97,12 @@ export interface OwnFood {
   fiber?: number;
   sugar?: number;
   saturatedFattyAcid?: number;
+  transFattyAcid?: number;
+  monoSaturated?: number;
+  polySaturated?: number;
+  cholesterol?: number;
+  sodium?: number;
   salt?: number;
+  calcium?: number;
+  alcohol?: number;
 }
