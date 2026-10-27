@@ -15,7 +15,11 @@ import type {
 } from "./types";
 
 const BASE = "https://www.kaloricketabulky.cz";
-const SESSION_KEY = "kt-session-cookie";
+// v2: earlier versions also cached the remember-me cookie; bumping the key forces a clean login.
+const SESSION_KEY = "kt-session-cookie-v2";
+// With `kaloricketabulky_token` present, KT silently rebuilds an expired session without the user's
+// settings (energy unit falls back to kJ). Without it, expiry redirects to /login and we log in properly.
+const REMEMBER_ME_COOKIE = "kaloricketabulky_token";
 // Without these some endpoints (statistic/*) answer with the HTML page instead of JSON.
 const AJAX_HEADERS = { Accept: "application/json, text/plain, */*", "X-Requested-With": "XMLHttpRequest" };
 
@@ -111,6 +115,8 @@ export class KtClient {
     await this.post("/user/foodstuff/add", {
       ...form,
       ...food,
+      // The form's unit follows the session, which can fall back to kJ; our energy is always kcal.
+      energyUnit: "kcal",
       diaryTimeGuid: mealId,
       time: time ?? form.time,
       detailValues: true,
@@ -147,6 +153,9 @@ export class KtClient {
   // Mirrors the settings page: the *Open / ownDailyDose flags tell the server which sections to save.
   async setGoals(kcal: number, nutrients: Record<string, number>): Promise<ProfileForm> {
     const form = await this.getProfile();
+    if (form.energyUnit !== "kcal") {
+      throw new Error(`Profile energy unit is "${form.energyUnit}", not kcal; refusing to save a kcal target.`);
+    }
     const known = new Set(form.ownNutrients.map((n) => n.code));
     const unknown = Object.keys(nutrients).filter((c) => !known.has(c));
     if (unknown.length) throw new Error(`Unknown nutrient codes: ${unknown.join(", ")}`);
@@ -219,16 +228,22 @@ export class KtClient {
       headers: { ...AJAX_HEADERS, ...init.headers, Cookie: cookie },
       redirect: "manual",
     });
+    const method = init.method ?? "GET";
     // Unauthenticated API calls redirect to /login instead of returning 401.
-    if (res.status >= 300 && res.status < 400) throw new AuthExpired();
+    if (res.status >= 300 && res.status < 400) {
+      console.log({ kt: `${method} ${path}`, status: res.status, auth: "expired" });
+      throw new AuthExpired();
+    }
 
     const text = await res.text();
     let body: ApiResponse<T>;
     try {
       body = JSON.parse(text);
     } catch {
+      console.log({ kt: `${method} ${path}`, status: res.status, error: "non-JSON response" });
       throw new Error(`KT ${path} returned ${res.status}: ${text.slice(0, 300)}`);
     }
+    console.log({ kt: `${method} ${path}`, status: res.status, code: body.code });
     if (body.code !== 0) {
       throw new Error(`KT ${path} failed: ${body.message ?? JSON.stringify(body)}`);
     }
@@ -250,12 +265,14 @@ export class KtClient {
       }),
     });
     const body: ApiResponse = await res.json();
+    console.log({ kt: "login", status: res.status, code: body.code });
     if (body.code !== 0) {
       throw new Error(`KT login failed: ${body.message ?? JSON.stringify(body)}`);
     }
     const cookie = res.headers
       .getAll("Set-Cookie")
       .map((c) => c.split(";")[0])
+      .filter((c) => !c.startsWith(`${REMEMBER_ME_COOKIE}=`))
       .join("; ");
     this.cookie = cookie;
     await this.kv.put(SESSION_KEY, cookie);

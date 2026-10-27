@@ -541,6 +541,9 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
+    const rpc = await request.clone().json().catch(() => null) as { method?: string; params?: { name?: string; arguments?: unknown } } | null;
+    if (rpc?.method === "tools/call") console.log({ tool: rpc.params?.name, args: rpc.params?.arguments });
+
     const kt = new KtClient({ email: env.KT_EMAIL, password: env.KT_PASSWORD }, env.KT_SESSION);
     const server = buildServer(kt, {
       recordWeight: env.ENABLE_RECORD_WEIGHT === "true",

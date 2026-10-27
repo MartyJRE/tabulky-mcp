@@ -5,5 +5,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "routes": [{ "pattern": "tabulky.martinprazak.com", "custom_domain": true }],
-  "kv_namespaces": [{ "binding": "KT_SESSION", "id": "e9e32f47e0b74e7f93f666260ab4d5f1" }]
+  "kv_namespaces": [{ "binding": "KT_SESSION", "id": "e9e32f47e0b74e7f93f666260ab4d5f1" }],
+  "observability": { "enabled": true }
 }
