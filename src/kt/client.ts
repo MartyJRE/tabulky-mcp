@@ -6,6 +6,7 @@ import type {
   OwnFood,
   ProfileForm,
   SearchHit,
+  Statistics,
   UnitForm,
 } from "./types";
 
@@ -49,6 +50,14 @@ export class KtClient {
 
   getDaySummary(date: string): Promise<unknown> {
     return this.get(`/user/diary/summary/${date}/get`);
+  }
+
+  getStatistics(date: string): Promise<Statistics> {
+    return this.get(`/statistic/summary/${date}/get`);
+  }
+
+  async recordWeight(weight: number, date: string): Promise<void> {
+    await this.post("/user/weight/add", { weight, date });
   }
 
   getAddForm(foodId: string, date: string): Promise<AddForm> {

@@ -6,9 +6,18 @@ It uses KT's unofficial web API; see [docs/api.md](docs/api.md).
 
 ## Tools
 
-`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`, `get_goals`, `set_goals`.
+`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`, `get_goals`, `set_goals`, `get_progress`.
+
+Set `ENABLE_RECORD_WEIGHT=true` (in `.dev.vars` or as a Worker var) to also expose `record_weight`. It's off by default for setups where a scale or health integration already writes the weight.
 
 `set_goals` takes macros only and derives the kcal target from them (4/4/9 kcal per g, rounded to 10), so the two can't drift apart.
+
+## Nutrition coach
+
+[`coach/nutrition-coach/SKILL.md`](coach/nutrition-coach/SKILL.md) turns Claude into a coach that logs meals, reviews progress and readjusts goals using these tools. Use it in one of two ways:
+
+- **Project:** create a project on claude.ai and paste the file's body (everything below the frontmatter) into its instructions. Add your personal context below it, such as who set your goals, diet preferences and health constraints.
+- **Skill:** zip the `nutrition-coach` folder and upload it in claude.ai under Settings → Capabilities → Skills. It's then available in every chat.
 
 ## Local dev
 

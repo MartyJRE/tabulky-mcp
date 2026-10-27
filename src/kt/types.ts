@@ -108,6 +108,20 @@ export interface ProfileForm {
   [field: string]: unknown;
 }
 
+export interface WeightPoint {
+  from: number;
+  value: number;
+}
+
+export interface Statistics {
+  weight: string;
+  weightTarget: string;
+  bmi: string;
+  bmiCategory: string;
+  basal: string;
+  monthWeight: WeightPoint[];
+}
+
 export interface OwnFood {
   title: string;
   energy: number;

@@ -9,6 +9,7 @@ export interface Env {
   KT_EMAIL: string;
   KT_PASSWORD: string;
   MCP_PATH_TOKEN: string;
+  ENABLE_RECORD_WEIGHT?: string;
 }
 
 // Proxied rather than committed, so the repo doesn't ship KT's logo. Connector UIs pick up the domain's favicon.
@@ -107,7 +108,35 @@ function compactDiary(diary: Diary) {
   }));
 }
 
-function buildServer(kt: KtClient): McpServer {
+const PROGRESS_CODES = new Set(["total", "protein", "carbohydrate", "fat", "fiber", "sugar"]);
+
+function shiftIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+function isoFromMs(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date(ms));
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+interface ServerOptions {
+  recordWeight: boolean;
+}
+
+function buildServer(kt: KtClient, options: ServerOptions): McpServer {
   const server = new McpServer(
     { name: "kaloricke-tabulky", version: "0.1.0", icons: [{ src: ICON_URL, mimeType: "image/png", sizes: ["180x180"] }] },
     {
@@ -272,6 +301,55 @@ function buildServer(kt: KtClient): McpServer {
   );
 
   server.registerTool(
+    "get_progress",
+    {
+      description:
+        "Daily intake vs. goals for a date range (kcal and main nutrients; days with 0 kcal were probably not logged), " +
+        "plus the weight log for the past month, BMI and basal metabolism. Use for trend and adherence reviews.",
+      inputSchema: {
+        days: z.number().int().min(1).max(31).default(14),
+        end_date: dateSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ days, end_date }) => {
+      const end = end_date ?? pragueToday();
+      const dates = Array.from({ length: days }, (_, i) => shiftIso(end, i - days + 1));
+      const daily = await mapLimited(dates, 4, async (iso) => ({
+        date: iso,
+        ...Object.fromEntries(
+          compactSummary(await kt.getDaySummary(ktDate(iso)))
+            .filter((s) => PROGRESS_CODES.has(String(s.name)))
+            .map((s) => [s.name, `${s.actual} / ${s.goal} ${s.unit}`]),
+        ),
+      }));
+      const stats = await kt.getStatistics(ktDate(end));
+      return json({
+        daily,
+        weight_kg: stats.weight,
+        target_weight_kg: stats.weightTarget,
+        bmi: `${stats.bmi} (${stats.bmiCategory})`,
+        basal_kcal: stats.basal,
+        weight_log: stats.monthWeight.map((w) => ({ date: isoFromMs(w.from), kg: w.value })),
+      });
+    },
+  );
+
+  if (options.recordWeight) {
+    server.registerTool(
+      "record_weight",
+      {
+        description: "Record a body weight measurement in kg.",
+        inputSchema: { weight_kg: z.number().min(30).max(300), date: dateSchema },
+      },
+      async ({ weight_kg, date }) => {
+        await kt.recordWeight(weight_kg, ktDate(date));
+        return json({ ok: true });
+      },
+    );
+  }
+
+  server.registerTool(
     "delete_food_entries",
     {
       description: "Delete diary entries by entry_id (from get_diary).",
@@ -342,7 +420,7 @@ export default {
     }
 
     const kt = new KtClient({ email: env.KT_EMAIL, password: env.KT_PASSWORD }, env.KT_SESSION);
-    const server = buildServer(kt);
+    const server = buildServer(kt, { recordWeight: env.ENABLE_RECORD_WEIGHT === "true" });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
