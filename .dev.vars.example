@@ -1,0 +1,3 @@
+KT_EMAIL=you@example.com
+KT_PASSWORD=your-kt-password
+MCP_PATH_TOKEN=generate-with-openssl-rand-hex-24
