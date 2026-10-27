@@ -3,7 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import { KtClient } from "./kt/client";
 import { getMenus, spotsSchema, type Spot } from "./menus";
-import type { Diary, DiaryItem, ProfileForm } from "./kt/types";
+import type { Diary, DiaryItem, OwnFood, ProfileForm } from "./kt/types";
 
 export interface Env {
   KT_SESSION: KVNamespace;
@@ -100,10 +100,30 @@ function toKtNutrients(input: Partial<Record<Nutrient, number>>) {
   return out;
 }
 
+function ownFoodFromDiary(f: DiaryItem): OwnFood {
+  const food: OwnFood = { title: f.title, energy: parseCzNumber(f.energy) };
+  for (const { field, mg, formMg } of Object.values(NUTRIENTS)) {
+    const v = f[field];
+    if (v != null) food[field] = mg && formMg ? v * 1000 : v;
+  }
+  return food;
+}
+
+function parseCzNumber(s: string | null): number {
+  return s ? Number(s.replace(/\s/g, "").replace(",", ".")) : 0;
+}
+
+function normalize(s: string): string {
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
+function mealName(id: string): string {
+  return Object.entries(MEALS).find(([, mealId]) => mealId === id)?.[0] ?? id;
+}
+
 function compactDiary(diary: Diary) {
-  const ids = Object.entries(MEALS);
   return diary.times.map((t) => ({
-    meal: ids.find(([, id]) => id === t.id)?.[0] ?? t.id,
+    meal: mealName(t.id),
     title: t.title,
     kcal_total: t.energyTotal,
     entries: t.foodstuff.map(compactItem),
@@ -117,6 +137,19 @@ function shiftIso(iso: string, days: number): string {
 
 function isoFromMs(ms: number): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date(ms));
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 interface ServerOptions {
@@ -332,6 +365,79 @@ function buildServer(kt: KtClient, options: ServerOptions): McpServer {
           .filter((w) => w.from != null)
           .map((w) => ({ date: isoFromMs(w.from!), kg: w.value }))
           .sort((a, b) => a.date.localeCompare(b.date)),
+      });
+    },
+  );
+
+  server.registerTool(
+    "search_history",
+    {
+      description:
+        "Find foods the user logged in past days by name (diacritics-insensitive, all words must match), newest first. " +
+        "Use when they say they've eaten something before but don't know when; then copy_entries can log it again.",
+      inputSchema: {
+        query: z.string().min(2),
+        days: z.number().int().min(1).max(45).default(30),
+        end_date: dateSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, days, end_date }) => {
+      const end = end_date ?? pragueToday();
+      const words = normalize(query).split(" ").filter(Boolean);
+      // Fetch only days that have anything logged; Workers allow ~50 outgoing requests per call.
+      const energy = await kt.getEnergyRange(ktDate(shiftIso(end, 1 - days)), ktDate(end));
+      const logged = energy.values.filter((p) => p.from != null && p.value > 0).map((p) => isoFromMs(p.from!));
+
+      const diaries = await mapLimited(logged, 5, async (iso) => ({ iso, diary: await kt.getDiary(ktDate(iso)) }));
+      const matches = diaries.flatMap(({ iso, diary }) =>
+        diary.times.flatMap((t) =>
+          t.foodstuff
+            .filter((f) => words.every((w) => normalize(f.title).includes(w)))
+            .map((f) => ({ date: iso, meal: mealName(t.id), ...compactItem(f) })),
+        ),
+      );
+      matches.sort((a, b) => b.date.localeCompare(a.date));
+      return json({ searched_days: logged.length, matches: matches.slice(0, 30) });
+    },
+  );
+
+  server.registerTool(
+    "copy_entries",
+    {
+      description:
+        "Copy diary entries to another day or meal: a whole meal ('breakfast like yesterday') or selected entry_ids from it " +
+        "(e.g. found with search_history). Amounts are copied as logged; adjust afterwards with update_food_entry if needed.",
+      inputSchema: {
+        from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("YYYY-MM-DD of the source day"),
+        from_meal: mealSchema,
+        entry_ids: z.array(z.string()).optional().describe("Entries of from_meal to copy; omit to copy the whole meal"),
+        to_date: dateSchema,
+        to_meal: mealSchema.optional().describe("Defaults to from_meal"),
+      },
+    },
+    async ({ from_date, from_meal, entry_ids, to_date, to_meal }) => {
+      const from = ktDate(from_date);
+      const to = ktDate(to_date);
+      const toMeal = MEALS[to_meal ?? from_meal];
+      const source = (await kt.getDiary(from)).times.find((t) => t.id === MEALS[from_meal])?.foodstuff ?? [];
+
+      const wanted = entry_ids ? new Set(entry_ids) : null;
+      const items = wanted ? source.filter((f) => wanted.has(f.id)) : source;
+      const missing = entry_ids?.filter((id) => !source.some((f) => f.id === id)) ?? [];
+      if (missing.length) throw new Error(`Entries not found in ${from_meal} on ${from_date}: ${missing.join(", ")}`);
+
+      const dbFoods = new Set(items.flatMap((f) => (f.guidType ? [f.guidType] : [])));
+      const copied = await kt.copyFoods(from, MEALS[from_meal], dbFoods, to, toMeal);
+
+      // One-off own foods aren't in the copy form, so they're re-added from their logged values.
+      const own = items.filter((f) => !f.guidType && !f.guidUserMeal);
+      for (const f of own) await kt.addOwnFood(ownFoodFromDiary(f), to, toMeal);
+
+      return json({
+        copied,
+        re_added_own_foods: own.map((f) => f.title),
+        skipped_saved_meals: items.filter((f) => f.guidUserMeal).map((f) => f.title),
       });
     },
   );

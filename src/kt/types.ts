@@ -49,9 +49,19 @@ export interface UnitForm {
   unitOptions: UnitOption[];
 }
 
+export interface CopyForm {
+  diaryTimeGuid: string;
+  date: string;
+  foodstuff: { selected: boolean; foodstuffGuid: string | null; title: string; count: number }[];
+  [field: string]: unknown;
+}
+
 export interface DiaryItem {
   id: string;
   type: string;
+  // Database food ID; null for one-off own foods and saved meals.
+  guidType: string | null;
+  guidUserMeal: string | null;
   title: string;
   unit: string | null;
   energy: string | null;

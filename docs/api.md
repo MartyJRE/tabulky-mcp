@@ -28,6 +28,8 @@ Send `Accept: application/json, text/plain, */*` and `X-Requested-With: XMLHttpR
 | Edit amount form | `GET /user/diary/foodstuff/unit/form/{entryId}` → `{diaryGuid, multiplier, unitGuid, unitOptions}` |
 | Edit amount | `POST /user/diary/foodstuff/unit/edit` with `{diaryGuid, multiplier, unitGuid}` |
 | Delete | `GET /user/diary/foodstuff/delete/{id1,id2,…}` |
+| Copy form | `GET /user/diary-time/create/form/{date}/{timeId}` → `{date (today), diaryTimeGuid, foodstuff: [{selected, foodstuffGuid, title, count, selectedUnitGuid, …}]}`. Items carry the database food ID, not the diary entry ID, and come in a different order than the diary. One-off own foods aren't included. |
+| Copy | `POST /user/diary-time/copy` with the copy form, `selected` set per item, target `date` and `diaryTimeGuid` |
 
 Meal (diary time) IDs: 1 Snídaně, 2 Dopolední svačina, 3 Oběd, 4 Odpolední svačina, 5 Večeře, 6 Druhá večeře. Their display names (which a user can rename) are in `diaryTimeOptions` of the add form.
 
@@ -53,7 +55,6 @@ Found by a second implementation of the same idea and confirmed by its author; l
 |---|---|
 | Saved meals ("Moje jídla") | List `GET /user/settings/meal/list?limit=100&query=`; log `GET /user/meal/add/form/{guid}` then `POST /user/meal/add`. Component `count = countOriginal × ratio`; a unit with `multiplier` 1 is grams, -1 is percent. |
 | Save a diary time as a meal | `GET /user/meal/create/form/{date}/{timeId}` then `POST /user/meal/create` with `title` |
-| Copy a diary time ("breakfast as yesterday") | `GET /user/diary-time/create/form/{date}/{timeId}`, set `selected: true` on items, `POST /user/diary-time/copy` with target `date` and `diaryTimeGuid` |
 | Move an entry | `GET /user/diary/{id}/{timeId}/0/dragndrop` (other meal) or `GET /user/diary/{id}/0/{date}/dragndrop` (other day). **A mutation over GET.** |
 | Drinks | `GET /autocomplete/drink?query=` |
 

@@ -2,6 +2,7 @@ import { md5 } from "js-md5";
 import type {
   AddForm,
   ApiResponse,
+  CopyForm,
   Diary,
   EnergyRange,
   NutrientRange,
@@ -167,6 +168,19 @@ export class KtClient {
     if (saved.ownTargetEnergy === kcal) return saved;
     await save(kcal + (kcal - (saved.ownTargetEnergy ?? kcal)));
     return this.getProfile();
+  }
+
+  getCopyForm(date: string, mealId: string): Promise<CopyForm> {
+    return this.get(`/user/diary-time/create/form/${date}/${mealId}`);
+  }
+
+  // The copy form lists the meal's database foods without diary entry IDs, so `foodIds` selects them by food ID.
+  async copyFoods(from: string, fromMeal: string, foodIds: Set<string>, to: string, toMeal: string): Promise<string[]> {
+    const form = await this.getCopyForm(from, fromMeal);
+    const foodstuff = form.foodstuff.map((f) => ({ ...f, selected: f.foodstuffGuid != null && foodIds.has(f.foodstuffGuid) }));
+    const copied = foodstuff.filter((f) => f.selected).map((f) => f.title);
+    if (copied.length) await this.post("/user/diary-time/copy", { ...form, foodstuff, date: to, diaryTimeGuid: toMeal });
+    return copied;
   }
 
   async deleteEntries(entryIds: string[]): Promise<void> {

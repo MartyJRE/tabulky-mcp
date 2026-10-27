@@ -6,7 +6,7 @@ It uses KT's unofficial web API; see [docs/api.md](docs/api.md).
 
 ## Tools
 
-`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`, `get_goals`, `set_goals`, `get_progress`.
+`search_foods`, `get_food_units`, `add_food_entry`, `add_own_food`, `get_diary`, `update_food_entry`, `delete_food_entries`, `get_goals`, `set_goals`, `get_progress`, `search_history`, `copy_entries`.
 
 Set `ENABLE_RECORD_WEIGHT=true` (in `.dev.vars` or as a Worker var) to also expose `record_weight`. It's off by default for setups where a scale or health integration already writes the weight.
 
